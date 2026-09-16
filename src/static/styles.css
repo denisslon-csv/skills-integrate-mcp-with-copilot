@@ -28,6 +28,12 @@ header h1 {
   margin-bottom: 10px;
 }
 
+.auth-status {
+  margin-top: 12px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
 main {
   display: flex;
   flex-wrap: wrap;
@@ -119,6 +125,15 @@ section h3 {
   padding: 2px 5px;
   transition: all 0.2s;
   border-radius: 3px;
+}
+
+#logout-button {
+  margin-top: 12px;
+  background-color: #616161;
+}
+
+#logout-button:hover {
+  background-color: #424242;
 }
 
 .delete-btn:hover {

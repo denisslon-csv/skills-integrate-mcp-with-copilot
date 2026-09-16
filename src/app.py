@@ -5,19 +5,28 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
+import hashlib
+import hmac
+import json
 import os
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
+session_secret = os.getenv("SESSION_SECRET", "change-this-development-secret")
+secure_cookies = os.getenv("ENVIRONMENT") == "production"
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+with open(current_dir / "users.json", encoding="utf-8") as users_file:
+    teachers = json.load(users_file)["teachers"]
 
 # In-memory activity database
 activities = {
@@ -78,6 +87,69 @@ activities = {
 }
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def require_teacher(request: Request):
+    if not get_teacher(request):
+        raise HTTPException(status_code=401, detail="Teacher login required")
+
+
+def password_matches(password: str, password_hash: str) -> bool:
+    candidate_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(candidate_hash, password_hash)
+
+
+def get_teacher(request: Request):
+    session = request.cookies.get("teacher_session", "")
+    username, separator, signature = session.partition("|")
+    expected_signature = hmac.new(
+        session_secret.encode("utf-8"), username.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    if separator and hmac.compare_digest(signature, expected_signature):
+        return username
+    return None
+
+
+@app.get("/auth/status")
+def auth_status(request: Request):
+    return {"authenticated": bool(get_teacher(request))}
+
+
+@app.post("/auth/login")
+def login(credentials: LoginRequest, request: Request):
+    teacher = next(
+        (teacher for teacher in teachers if teacher["username"] == credentials.username),
+        None,
+    )
+    if not teacher or not password_matches(credentials.password, teacher["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    session = hmac.new(
+        session_secret.encode("utf-8"),
+        teacher["username"].encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    response = JSONResponse({"message": "Logged in as teacher", "authenticated": True})
+    response.set_cookie(
+        "teacher_session",
+        f"{teacher['username']}|{session}",
+        httponly=True,
+        secure=secure_cookies,
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    response = JSONResponse({"message": "Logged out", "authenticated": False})
+    response.delete_cookie("teacher_session")
+    return response
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
@@ -89,8 +161,9 @@ def get_activities():
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str, request: Request):
     """Sign up a student for an activity"""
+    require_teacher(request)
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,8 +184,9 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str, request: Request):
     """Unregister a student from an activity"""
+    require_teacher(request)
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
