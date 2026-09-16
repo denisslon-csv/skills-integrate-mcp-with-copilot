@@ -2,7 +2,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitiesList = document.getElementById("activities-list");
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
+  const loginForm = document.getElementById("login-form");
+  const logoutButton = document.getElementById("logout-button");
+  const loginPanel = document.getElementById("login-panel");
+  const teacherPanel = document.getElementById("teacher-panel");
+  const authStatus = document.getElementById("auth-status");
   const messageDiv = document.getElementById("message");
+  let authenticated = false;
+
+  function updateAuthUi() {
+    loginPanel.classList.toggle("hidden", authenticated);
+    teacherPanel.classList.toggle("hidden", !authenticated);
+    authStatus.textContent = authenticated ? "Teacher mode" : "Student view";
+  }
+
+  async function fetchAuthStatus() {
+    const response = await fetch("/auth/status");
+    const result = await response.json();
+    authenticated = result.authenticated;
+    updateAuthUi();
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.length = 1;
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -30,7 +50,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${
+                        authenticated
+                          ? `<button class="delete-btn" data-activity="${name}" data-email="${email}">Remove</button>`
+                          : ""
+                      }</li>`
                   )
                   .join("")}
               </ul>
@@ -155,6 +179,44 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.getElementById("username").value,
+          password: document.getElementById("password").value,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail || "Unable to log in");
+      }
+
+      authenticated = true;
+      loginForm.reset();
+      updateAuthUi();
+      fetchActivities();
+      messageDiv.textContent = result.message;
+      messageDiv.className = "success";
+    } catch (error) {
+      messageDiv.textContent = error.message;
+      messageDiv.className = "error";
+    }
+    messageDiv.classList.remove("hidden");
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    authenticated = false;
+    updateAuthUi();
+    fetchActivities();
+  });
+
   // Initialize app
-  fetchActivities();
+  fetchAuthStatus().then(fetchActivities);
 });
